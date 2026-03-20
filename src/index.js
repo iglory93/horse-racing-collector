@@ -26,18 +26,30 @@ let collectorStarted = false;
 const app = express();
 const port = Number(process.env.PORT || 10000);
 
-app.get('/healthz', (_req, res) => {
-  console.log('health check!');
-  res.status(200).json({
-    ok: true,
-    service: 'horse-racing-collector',
-    uptimeSec: Math.floor(process.uptime()),
-    startedAt: startedAt.toISOString(),
-    now: new Date().toISOString(),
-    shuttingDown,
-    leader: leaderLock.isLeader,
-    collectorStarted
-  });
+let lastSyncOkAt = Date.now();
+
+function markSyncOk() {
+  lastSyncOkAt = Date.now();
+}
+
+let healthHitCount = 0;
+
+app.get('/healthz', (req, res) => {
+  healthHitCount += 1;
+
+  const staleMs = Date.now() - lastSyncOkAt;
+  const unhealthy = staleMs > 2 * env.syncIntervalMs + 30000;
+
+  if (unhealthy) {
+    logger.warn('health check failed', { staleMs });
+    return res.status(500).json({ ok: false, staleMs });
+  }
+
+  if (healthHitCount % 20 === 0) {
+    logger.info('health check ok', { staleMs });
+  }
+
+  return res.status(200).json({ ok: true, staleMs });
 });
 
 app.get('/', (_req, res) => {
@@ -69,11 +81,19 @@ async function startCollector() {
 
   logger.info('horse racing collector start');
   await channelManager.sync();
+  markSyncOk();
 
+  // syncTimer = setInterval(() => {
+  //   channelManager.sync().catch((error) => {
+  //     logger.error('sync failed', error.message);
+  //   });
+  // }, env.syncIntervalMs);
   syncTimer = setInterval(() => {
-    channelManager.sync().catch((error) => {
-      logger.error('sync failed', error.message);
-    });
+    channelManager.sync()
+      .then(() => markSyncOk())
+      .catch((error) => {
+        logger.error('sync failed', error.message);
+      });
   }, env.syncIntervalMs);
 
   flushTimer = setInterval(() => {
