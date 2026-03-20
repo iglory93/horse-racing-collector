@@ -34,6 +34,15 @@ function markSyncOk() {
 
 let healthHitCount = 0;
 
+app.get('/keepalive', (_req, res) => {
+  console.log('keep alive ! ');
+  res.status(200).json({
+    ok: true,
+    now: new Date().toISOString(),
+    leader: leaderLock.isLeader
+  });
+});
+
 app.get('/healthz', (req, res) => {
   healthHitCount += 1;
 
