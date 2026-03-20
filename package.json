@@ -1,0 +1,18 @@
+{
+  "name": "tting-horse-racing-collector",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "lint:check": "node -e \"console.log('no lint configured')\""
+  },
+  "dependencies": {
+    "axios": "^1.13.6",
+    "dotenv": "^17.3.1",
+    "firebase-admin": "^13.7.0",
+    "socket.io-client": "^4.8.3"
+  }
+}
