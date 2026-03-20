@@ -1,3 +1,4 @@
+const express = require('express');
 const env = require('./config/env');
 const logger = require('./utils/logger');
 const { AggregationStore } = require('./stores/aggregationStore');
@@ -17,13 +18,32 @@ const channelManager = new ChannelManager({
 let syncTimer = null;
 let flushTimer = null;
 let shuttingDown = false;
+let startedAt = new Date();
+
+const app = express();
+const port = Number(process.env.PORT || 10000);
+
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'horse-racing-collector',
+    uptimeSec: Math.floor(process.uptime()),
+    startedAt: startedAt.toISOString(),
+    now: new Date().toISOString(),
+    shuttingDown
+  });
+});
+
+app.get('/', (_req, res) => {
+  res.status(200).send('horse-racing-collector is running');
+});
 
 async function flushNow() {
   const snapshot = aggregationStore.drainSnapshot();
   await writer.flush(snapshot);
 }
 
-async function start() {
+async function startCollector() {
   logger.info('horse racing collector start');
   await channelManager.sync();
 
@@ -53,6 +73,8 @@ async function shutdown(signal) {
 
   try {
     await flushNow();
+  } catch (error) {
+    logger.error('final flush failed', error);
   } finally {
     process.exit(0);
   }
@@ -69,7 +91,13 @@ process.on('unhandledRejection', (error) => {
   shutdown('unhandledRejection');
 });
 
-start().catch((error) => {
-  logger.error('startup failed', error);
-  process.exit(1);
+app.listen(port, '0.0.0.0', async () => {
+  logger.info(`http server listening on ${port}`);
+
+  try {
+    await startCollector();
+  } catch (error) {
+    logger.error('startup failed', error);
+    process.exit(1);
+  }
 });
