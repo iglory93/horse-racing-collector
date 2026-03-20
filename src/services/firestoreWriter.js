@@ -3,19 +3,35 @@ const logger = require('../utils/logger');
 
 class FirestoreWriter {
   async flush(snapshot) {
-    const { channels, rounds, day } = snapshot;
-    if (!channels.length && !rounds.length) {
+    const { channels, rounds, day, activeChannels } = snapshot;
+
+    if (!channels.length && !rounds.length && !activeChannels.length) {
       return;
     }
 
     const writer = db.bulkWriter();
+
     writer.onWriteError((error) => {
       logger.error('bulkWriter error', error.documentRef?.path, error.message);
       return false;
     });
 
+    for (const active of activeChannels) {
+      const ref = db.collection('horseRaceChannels').doc(String(active.channelId));
+      writer.set(ref, {
+        channelId: String(active.channelId),
+        title: active.title || '',
+        nickname: active.nickname || '',
+        isAdult: !!active.isAdult,
+        playerCount: Number(active.playerCount || 0),
+        startedAt: active.startedAt || null,
+        updatedAt: active.updatedAt || admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }
+
     for (const channel of channels) {
       const channelRef = db.collection('horseRaceDaily').doc(day).collection('channels').doc(String(channel.channelId));
+
       writer.set(channelRef, {
         channelId: String(channel.channelId),
         day,
@@ -60,20 +76,12 @@ class FirestoreWriter {
     }
 
     await writer.close();
-    logger.info('firestore flush complete', { channelCount: channels.length, roundCount: rounds.length });
-  }
 
-  async markChannelActive(channel) {
-    const ref = db.collection('horseRaceChannels').doc(String(channel.channelId));
-    await ref.set({
-      channelId: String(channel.channelId),
-      title: channel.title || '',
-      nickname: channel.owner?.nickname || channel.highlightNickname || '',
-      isAdult: !!channel?.barrier?.isForAdult,
-      playerCount: Number(channel.playerCount || 0),
-      startedAt: channel.startedAt || null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    logger.info('firestore flush complete', {
+      activeChannelCount: activeChannels.length,
+      channelCount: channels.length,
+      roundCount: rounds.length
+    });
   }
 }
 

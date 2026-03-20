@@ -17,6 +17,9 @@ class AggregationStore {
     this.channels = new Map();
     this.roundResults = new Map();
     this.dirtyChannels = new Set();
+
+    this.activeChannels = new Map();
+    this.dirtyActiveChannels = new Set();
   }
 
   ensureChannel(channelId) {
@@ -32,6 +35,37 @@ class AggregationStore {
       });
     }
     return this.channels.get(key);
+  }
+
+  upsertActiveChannel(channel) {
+    const channelId = String(channel?.channelId || '').trim();
+    if (!channelId) return;
+
+    const next = {
+      channelId,
+      title: String(channel?.title || ''),
+      nickname: String(channel?.owner?.nickname || channel?.highlightNickname || ''),
+      isAdult: !!channel?.barrier?.isForAdult,
+      playerCount: Number(channel?.playerCount || 0),
+      startedAt: channel?.startedAt || null,
+      updatedAt: new Date().toISOString()
+    };
+
+    const prev = this.activeChannels.get(channelId);
+
+    const changed =
+      !prev ||
+      prev.title !== next.title ||
+      prev.nickname !== next.nickname ||
+      prev.isAdult !== next.isAdult ||
+      prev.playerCount !== next.playerCount ||
+      prev.startedAt !== next.startedAt;
+
+    this.activeChannels.set(channelId, next);
+
+    if (changed) {
+      this.dirtyActiveChannels.add(channelId);
+    }
   }
 
   onRoundStart(channelId, payload) {
@@ -62,6 +96,7 @@ class AggregationStore {
     current.betCount += 1;
     current.lastRoundId = Number(payload?.roundId || channel.currentRoundId || 0) || null;
     current.updatedAt = new Date().toISOString();
+
     channel.betsByUser.set(userKey, current);
     channel.updatedAt = current.updatedAt;
     this.dirtyChannels.add(String(channelId));
@@ -95,8 +130,8 @@ class AggregationStore {
       if (rank === 2) horse.secondCount += 1;
       if (rank === 3) horse.thirdCount += 1;
       horse.updatedAt = new Date().toISOString();
-      channel.horseStats.set(String(horseId), horse);
 
+      channel.horseStats.set(String(horseId), horse);
       results.push({ horseId, horseName, rank });
     }
 
@@ -119,6 +154,7 @@ class AggregationStore {
   drainSnapshot() {
     const day = todayKey();
     const channels = [];
+    const activeChannels = [];
 
     for (const channelId of this.dirtyChannels) {
       const channel = this.channels.get(channelId);
@@ -129,16 +165,27 @@ class AggregationStore {
         day,
         startedRounds: channel.startedRounds,
         updatedAt: channel.updatedAt,
-        betsByUser: Array.from(channel.betsByUser.entries()).map(([userKey, value]) => ({ userKey, ...value })),
+        betsByUser: Array.from(channel.betsByUser.entries()).map(([userKey, value]) => ({
+          userKey,
+          ...value
+        })),
         horseStats: Array.from(channel.horseStats.values())
       });
     }
 
+    for (const channelId of this.dirtyActiveChannels) {
+      const channel = this.activeChannels.get(channelId);
+      if (!channel) continue;
+      activeChannels.push(channel);
+    }
+
     const rounds = Array.from(this.roundResults.values());
+
     this.dirtyChannels.clear();
+    this.dirtyActiveChannels.clear();
     this.roundResults.clear();
 
-    return { day, channels, rounds };
+    return { day, channels, rounds, activeChannels };
   }
 }
 

@@ -12,7 +12,7 @@ const channelManager = new ChannelManager({
   onRoundStart: (channelId, payload) => aggregationStore.onRoundStart(channelId, payload),
   onBet: (channelId, payload) => aggregationStore.onBet(channelId, payload),
   onResult: (channelId, payload) => aggregationStore.onResult(channelId, payload),
-  writer
+  aggregationStore
 });
 
 let syncTimer = null;

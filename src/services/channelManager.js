@@ -5,11 +5,11 @@ const logger = require('../utils/logger');
 const env = require('../config/env');
 
 class ChannelManager {
-  constructor({ onRoundStart, onBet, onResult, writer }) {
+  constructor({ onRoundStart, onBet, onResult, aggregationStore }) {
     this.onRoundStart = onRoundStart;
     this.onBet = onBet;
     this.onResult = onResult;
-    this.writer = writer;
+    this.aggregationStore = aggregationStore;
     this.channels = new Map();
   }
 
@@ -35,7 +35,8 @@ class ChannelManager {
 
     await runWithConcurrency(details, env.socketConnectConcurrency, async ({ channel, detail }) => {
       const channelId = String(channel.channelId);
-      await this.writer.markChannelActive(channel);
+
+      this.aggregationStore.upsertActiveChannel(channel);
 
       if (this.channels.has(channelId)) {
         return;
