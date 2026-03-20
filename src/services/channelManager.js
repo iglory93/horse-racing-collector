@@ -36,7 +36,9 @@ class ChannelManager {
     await runWithConcurrency(details, env.socketConnectConcurrency, async ({ channel, detail }) => {
       const channelId = String(channel.channelId);
 
-      this.aggregationStore.upsertActiveChannel(channel);
+      if (this.aggregationStore?.upsertActiveChannel) {
+        this.aggregationStore.upsertActiveChannel(channel);
+      }
 
       if (this.channels.has(channelId)) {
         return;
