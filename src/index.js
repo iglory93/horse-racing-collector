@@ -18,21 +18,21 @@ const channelManager = new ChannelManager({
 });
 
 let syncTimer = null;
-let flushTimer = null;
+let flushStartTimer = null;
 let shuttingDown = false;
 let startedAt = new Date();
 let collectorStarted = false;
+let flushPromise = null;
 
 const app = express();
 const port = Number(process.env.PORT || 10000);
 
 let lastSyncOkAt = Date.now();
+let healthHitCount = 0;
 
 function markSyncOk() {
   lastSyncOkAt = Date.now();
 }
-
-let healthHitCount = 0;
 
 app.get('/keepalive', (_req, res) => {
   console.log('keep alive ! ');
@@ -43,7 +43,7 @@ app.get('/keepalive', (_req, res) => {
   });
 });
 
-app.get('/healthz', (req, res) => {
+app.get('/healthz', (_req, res) => {
   healthHitCount += 1;
 
   const staleMs = Date.now() - lastSyncOkAt;
@@ -66,8 +66,60 @@ app.get('/', (_req, res) => {
 });
 
 async function flushNow() {
-  const snapshot = aggregationStore.drainSnapshot();
-  await writer.flush(snapshot);
+  if (flushPromise) {
+    logger.warn('flush skipped: previous flush still running');
+    return flushPromise;
+  }
+
+  flushPromise = (async () => {
+    const snapshot = aggregationStore.drainSnapshot();
+    await writer.flush(snapshot);
+  })();
+
+  try {
+    await flushPromise;
+  } finally {
+    flushPromise = null;
+  }
+}
+
+function getMsUntilNextHour() {
+  const now = new Date();
+  const nextHour = new Date(now);
+
+  nextHour.setMinutes(0, 0, 0);
+  nextHour.setHours(nextHour.getHours() + 1);
+
+  return nextHour.getTime() - now.getTime();
+}
+
+function scheduleNextHourlyFlush() {
+  if (shuttingDown || !collectorStarted) return;
+
+  const delay = getMsUntilNextHour();
+
+  logger.info('next hourly flush scheduled', {
+    delayMs: delay,
+    nextFlushAt: new Date(Date.now() + delay).toISOString()
+  });
+
+  flushStartTimer = setTimeout(async () => {
+    flushStartTimer = null;
+
+    try {
+      await flushNow();
+    } catch (error) {
+      logger.error('flush failed', error.message);
+    } finally {
+      if (!shuttingDown && collectorStarted) {
+        scheduleNextHourlyFlush();
+      }
+    }
+  }, delay);
+}
+
+function startHourlyFlushScheduler() {
+  scheduleNextHourlyFlush();
 }
 
 function stopCollector() {
@@ -76,9 +128,9 @@ function stopCollector() {
     syncTimer = null;
   }
 
-  if (flushTimer) {
-    clearInterval(flushTimer);
-    flushTimer = null;
+  if (flushStartTimer) {
+    clearTimeout(flushStartTimer);
+    flushStartTimer = null;
   }
 
   channelManager.stopAll();
@@ -88,15 +140,13 @@ function stopCollector() {
 async function startCollector() {
   if (collectorStarted) return;
 
-  logger.info('horse racing collector start');
+  logger.info('horse racing collector start', {
+    startedAt: startedAt.toISOString()
+  });
+
   await channelManager.sync();
   markSyncOk();
 
-  // syncTimer = setInterval(() => {
-  //   channelManager.sync().catch((error) => {
-  //     logger.error('sync failed', error.message);
-  //   });
-  // }, env.syncIntervalMs);
   syncTimer = setInterval(() => {
     channelManager.sync()
       .then(() => markSyncOk())
@@ -105,13 +155,8 @@ async function startCollector() {
       });
   }, env.syncIntervalMs);
 
-  flushTimer = setInterval(() => {
-    flushNow().catch((error) => {
-      logger.error('flush failed', error.message);
-    });
-  }, env.eventFlushIntervalMs);
-
   collectorStarted = true;
+  startHourlyFlushScheduler();
 }
 
 async function startLeaderOnlyCollector() {
@@ -125,16 +170,20 @@ async function startLeaderOnlyCollector() {
     setInterval(async () => {
       if (shuttingDown || leaderLock.isLeader || collectorStarted) return;
 
-      const ok = await leaderLock.tryAcquire();
-      if (!ok) return;
+      try {
+        const ok = await leaderLock.tryAcquire();
+        if (!ok) return;
 
-      await startCollector();
-      leaderLock.startRenewLoop({
-        onLost: async () => {
-          logger.warn('leader lost, collector stopping');
-          stopCollector();
-        }
-      });
+        await startCollector();
+        leaderLock.startRenewLoop({
+          onLost: async () => {
+            logger.warn('leader lost, collector stopping');
+            stopCollector();
+          }
+        });
+      } catch (error) {
+        logger.error('leader reacquire/start failed', error);
+      }
     }, env.leaderRenewIntervalMs);
 
     return;
