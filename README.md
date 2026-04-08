@@ -10,10 +10,9 @@
    - `LOTTERY_ROUND_START`
    - `FX_LOTTERY_GAME_BET`
    - `FX_LOTTERY_GAME_RESULT`
-6. Firestore에 배치 기록
+6. MongoDB에 배치 기록
 
 ## 유지한 것
-- 동일 Firebase 프로젝트 연결 방식
 - 동일 TTING 로그인 방식
 - socket.io-client 기반 실시간 수집
 
@@ -26,14 +25,16 @@
 
 ## 수집되는 데이터
 ### 1) 유저 투자 랭킹
-`horseRaceDaily/{yyyymmdd}/channels/{channelId}/betUsers/{userKey}`
+`horseRaceDailyBetUsers`
 - `nickname`
 - `totalAmount`
 - `betCount`
 - `lastRoundId`
+- `day`
+- `channelId`
 
 ### 2) 말 순위 통계
-`horseRaceDaily/{yyyymmdd}/channels/{channelId}/horseStats/{horseId}`
+`horseRaceDailyHorseStats`
 - `firstCount`
 - `secondCount`
 - `thirdCount`
@@ -41,12 +42,31 @@
 - `firstRatio`
 - `secondRatio`
 - `thirdRatio`
+- `day`
+- `channelId`
 
 ### 3) 라운드 결과 원본
 `horseRaceRounds/{channelId}_{roundId}`
 - `results[]`
 - `startAt`
 - `gameTypeKey`
+
+### 4) 일별 채널 집계 요약
+`horseRaceDailyChannels`
+- `day`
+- `channelId`
+- `startedRounds`
+- `userCount`
+- `horseCount`
+
+### 5) 현재 활성 채널
+`horseRaceChannels/{channelId}`
+- `title`
+- `nickname`
+- `isAdult`
+- `playerCount`
+- `startedAt`
+- `updatedAt`
 
 ## 현재 한계
 현재 확인한 `FX_LOTTERY_GAME_BET` 샘플에는 **어느 말에 베팅했는지 정보가 없음**.
@@ -66,11 +86,17 @@ cp .env.example .env
 npm start
 ```
 
+필수 환경변수:
+- `MONGO_URI`
+- `MONGO_DB_NAME`
+- `TTING_ID`
+- `TTING_PWD`
+
 ## 성능 포인트
 - live-list-main는 주기 동기화만 수행
 - stream detail 조회는 제한된 동시성으로 처리
 - socket 연결도 제한된 동시성으로 처리
-- Firestore는 개별 이벤트마다 쓰지 않고 BulkWriter로 묶어서 flush
+- MongoDB는 개별 이벤트마다 쓰지 않고 bulk upsert로 묶어서 flush
 - 메모리 집계 후 주기 flush 구조라 전체 채널 대응에 유리
 
 ## 추가로 바로 붙일 수 있는 개선

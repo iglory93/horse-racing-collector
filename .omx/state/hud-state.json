@@ -1,0 +1,6 @@
+{
+  "last_turn_at": "2026-04-08T09:47:24.534Z",
+  "turn_count": 2,
+  "last_progress_at": "2026-04-08T09:47:24.534Z",
+  "last_agent_output": "Mongo 기준으로 전환해뒀습니다. 이제 앱은 Firestore 대신 MongoDB에 연결해서 집계 데이터와 리더 락을 처리합니다.\n\n주요 변경은 [src/services/mong"
+}

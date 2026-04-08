@@ -2,13 +2,14 @@ const express = require('express');
 const env = require('./config/env');
 const logger = require('./utils/logger');
 const { AggregationStore } = require('./stores/aggregationStore');
-const { FirestoreWriter } = require('./services/firestoreWriter');
+const { MongoWriter } = require('./services/mongoWriter');
 const { ChannelManager } = require('./services/channelManager');
-const { FirestoreLeaderLock } = require('./services/leaderLock');
+const { MongoLeaderLock } = require('./services/mongoLeaderLock');
+const { connectToMongo, closeMongoConnection } = require('./services/mongo');
 
 const aggregationStore = new AggregationStore();
-const writer = new FirestoreWriter();
-const leaderLock = new FirestoreLeaderLock();
+const writer = new MongoWriter();
+const leaderLock = new MongoLeaderLock();
 
 const channelManager = new ChannelManager({
   onRoundStart: (channelId, payload) => aggregationStore.onRoundStart(channelId, payload),
@@ -217,6 +218,12 @@ async function shutdown(signal) {
     await leaderLock.release();
   } catch (error) {
     logger.error('leader release failed', error);
+  }
+
+  try {
+    await closeMongoConnection();
+  } catch (error) {
+    logger.error('mongo close failed', error);
   } finally {
     process.exit(0);
   }
@@ -237,6 +244,7 @@ app.listen(port, '0.0.0.0', async () => {
   logger.info(`http server listening on ${port}`);
 
   try {
+    await connectToMongo();
     await startLeaderOnlyCollector();
   } catch (error) {
     logger.error('startup failed', error);

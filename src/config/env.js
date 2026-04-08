@@ -1,4 +1,12 @@
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+
+dotenv.config({ quiet: true });
+dotenv.config({
+  path: path.resolve(__dirname, '../.env'),
+  override: false,
+  quiet: true
+});
 
 function toInt(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -6,9 +14,8 @@ function toInt(value, fallback) {
 }
 
 module.exports = {
-  firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
-  firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-  firebasePrivateKey: String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+  mongoUri: process.env.MONGO_URI,
+  mongoDbName: process.env.MONGO_DB_NAME,
   ttingId: process.env.TTING_ID,
   ttingPassword: process.env.TTING_PWD,
   nodeEnv: process.env.NODE_ENV || 'production',

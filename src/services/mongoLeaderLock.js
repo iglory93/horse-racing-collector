@@ -1,12 +1,12 @@
 const crypto = require('crypto');
-const { db, admin } = require('./firebase');
+const { connectToMongo } = require('./mongo');
 const env = require('../config/env');
 const logger = require('../utils/logger');
 
-class FirestoreLeaderLock {
+class MongoLeaderLock {
   constructor() {
     this.instanceId = `${process.env.RENDER_INSTANCE_ID || process.pid}-${crypto.randomBytes(6).toString('hex')}`;
-    this.docRef = db.collection('_locks').doc(env.leaderLockKey);
+    this.lockId = env.leaderLockKey;
     this.renewTimer = null;
     this.isLeader = false;
   }
@@ -21,41 +21,46 @@ class FirestoreLeaderLock {
       ownerId: this.instanceId,
       leaseMs: env.leaderLeaseMs,
       expiresAtMs,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      updatedAt: new Date()
     };
   }
 
   async tryAcquire() {
     const now = this.nowMs();
     const nextExpiresAtMs = now + env.leaderLeaseMs;
+    const collection = (await connectToMongo()).collection('_locks');
 
     try {
-      const acquired = await db.runTransaction(async (tx) => {
-        const snap = await tx.get(this.docRef);
+      try {
+        await collection.insertOne({
+          _id: this.lockId,
+          createdAt: new Date(),
+          ...this.buildPayload(nextExpiresAtMs)
+        });
 
-        if (!snap.exists) {
-          tx.set(this.docRef, this.buildPayload(nextExpiresAtMs), { merge: true });
-          return true;
+        this.isLeader = true;
+      } catch (error) {
+        if (error?.code !== 11000) {
+          throw error;
         }
 
-        const data = snap.data() || {};
-        const ownerId = String(data.ownerId || '');
-        const expiresAtMs = Number(data.expiresAtMs || 0);
+        const result = await collection.updateOne(
+          {
+            _id: this.lockId,
+            $or: [
+              { expiresAtMs: { $lte: now } },
+              { ownerId: this.instanceId }
+            ]
+          },
+          {
+            $set: this.buildPayload(nextExpiresAtMs)
+          }
+        );
 
-        const expired = !expiresAtMs || expiresAtMs <= now;
-        const mine = ownerId === this.instanceId;
+        this.isLeader = result.matchedCount === 1;
+      }
 
-        if (expired || mine) {
-          tx.set(this.docRef, this.buildPayload(nextExpiresAtMs), { merge: true });
-          return true;
-        }
-
-        return false;
-      });
-
-      this.isLeader = acquired;
-
-      if (acquired) {
+      if (this.isLeader) {
         logger.info('leader lock acquired', {
           key: env.leaderLockKey,
           instanceId: this.instanceId,
@@ -63,8 +68,9 @@ class FirestoreLeaderLock {
         });
       }
 
-      return acquired;
+      return this.isLeader;
     } catch (error) {
+      this.isLeader = false;
       logger.error('leader lock acquire failed', error.message);
       return false;
     }
@@ -73,26 +79,21 @@ class FirestoreLeaderLock {
   async renew() {
     if (!this.isLeader) return false;
 
-    const now = this.nowMs();
-    const nextExpiresAtMs = now + env.leaderLeaseMs;
+    const nextExpiresAtMs = this.nowMs() + env.leaderLeaseMs;
+    const collection = (await connectToMongo()).collection('_locks');
 
     try {
-      const renewed = await db.runTransaction(async (tx) => {
-        const snap = await tx.get(this.docRef);
-        if (!snap.exists) return false;
-
-        const data = snap.data() || {};
-        const ownerId = String(data.ownerId || '');
-
-        if (ownerId !== this.instanceId) {
-          return false;
+      const result = await collection.updateOne(
+        {
+          _id: this.lockId,
+          ownerId: this.instanceId
+        },
+        {
+          $set: this.buildPayload(nextExpiresAtMs)
         }
+      );
 
-        tx.set(this.docRef, this.buildPayload(nextExpiresAtMs), { merge: true });
-        return true;
-      });
-
-      if (!renewed) {
+      if (result.matchedCount !== 1) {
         this.isLeader = false;
         logger.warn('leader lock lost', {
           key: env.leaderLockKey,
@@ -135,20 +136,22 @@ class FirestoreLeaderLock {
     this.stopRenewLoop();
 
     try {
-      await db.runTransaction(async (tx) => {
-        const snap = await tx.get(this.docRef);
-        if (!snap.exists) return;
+      const collection = (await connectToMongo()).collection('_locks');
 
-        const data = snap.data() || {};
-        if (String(data.ownerId || '') !== this.instanceId) return;
-
-        tx.set(this.docRef, {
-          releasedAt: admin.firestore.FieldValue.serverTimestamp(),
-          expiresAtMs: 0,
-          ownerId: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-      });
+      await collection.updateOne(
+        {
+          _id: this.lockId,
+          ownerId: this.instanceId
+        },
+        {
+          $set: {
+            ownerId: null,
+            expiresAtMs: 0,
+            releasedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
 
       logger.info('leader lock released', {
         key: env.leaderLockKey,
@@ -162,4 +165,4 @@ class FirestoreLeaderLock {
   }
 }
 
-module.exports = { FirestoreLeaderLock };
+module.exports = { MongoLeaderLock };
